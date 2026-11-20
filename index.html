@@ -120,7 +120,7 @@ select{font:inherit;font-size:13px;font-weight:600;padding:10px 12px;border-radi
 <div class="toast" id="toast"></div>
 
 <script>
-const API="https://api.mail.tm";
+const HOSTS=["https://api.mail.tm","https://api.mail.gw"];let API=HOSTS[0];
 const $=id=>document.getElementById(id);
 let acc=null,token="",msgs=[],seen=new Set(),poll=null,tick=null,total=600,left=600,busy=false;
 const emptySvg='<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="m4 8 8 6 8-6"/></svg>';
@@ -214,19 +214,26 @@ async function gen(){
   $("new").disabled=$("del").disabled=true;$("new").textContent="Generating…";setSt("Generating…");
   try{
     if(acc)await api("/accounts/"+acc.id,{method:"DELETE"}).catch(()=>{});
-    const dm=await api("/domains");
-    const domain=dm["hydra:member"][0].domain;
-    const address=rnd(10)+"@"+domain,password=rnd(16);
-    const a=await api("/accounts",{method:"POST",body:JSON.stringify({address,password})});
-    const t=await api("/token",{method:"POST",body:JSON.stringify({address,password})});
-    acc={id:a.id,address,password};token=t.token;msgs=[];seen=new Set();
+    let a,t,address,password,lastErr=null;
+    for(const h of HOSTS){
+      try{
+        API=h;token="";
+        const dm=await api("/domains");
+        address=rnd(10)+"@"+dm["hydra:member"][0].domain;password=rnd(16);
+        a=await api("/accounts",{method:"POST",body:JSON.stringify({address,password})});
+        t=await api("/token",{method:"POST",body:JSON.stringify({address,password})});
+        lastErr=null;break;
+      }catch(e){lastErr=e}
+    }
+    if(lastErr)throw lastErr;
+    acc={id:a.id,address,password,host:API};token=t.token;msgs=[];seen=new Set();
     store.set("tm_acc",JSON.stringify(acc));
     $("addr").textContent=address;render();startTimer();setSt("Live");
     toast("New email address generated.");
     poll=setInterval(()=>fetchInbox(false),5000);
   }catch(e){
     setSt("Offline",true);
-    toast(e.name==="TypeError"?"Mail server is blocked here. Open this page from your own Netlify link, not inside Claude.":e.message==="429"?"Too many requests, wait a few seconds and try again":"Mail server error ("+e.message+"). Try again in a moment.");
+    toast(e.name==="TypeError"?"Can’t reach the mail servers. Try other Wi‑Fi or mobile data, and turn off VPN, Private DNS or ad blocker.":e.message==="429"?"Too many requests, wait a few seconds and try again":"Mail server error ("+e.message+"). Try again in a moment.");
   }
   $("new").disabled=$("del").disabled=false;$("new").textContent="+ New Email";busy=false;
 }
@@ -239,7 +246,7 @@ async function remove(){
 async function restore(){
   const raw=store.get("tm_acc");if(!raw)return gen();
   try{
-    acc=JSON.parse(raw);
+    acc=JSON.parse(raw);API=acc.host||HOSTS[0];
     const t=await api("/token",{method:"POST",body:JSON.stringify({address:acc.address,password:acc.password})});
     token=t.token;$("addr").textContent=acc.address;startTimer();await fetchInbox(true);
     poll=setInterval(()=>fetchInbox(false),5000);
